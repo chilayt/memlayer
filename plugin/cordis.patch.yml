@@ -1,0 +1,10 @@
+# Optional DSH adapter. Select exact project roots before enabling capture.
+- insert:
+    - id: memlayer
+      name: dsh-memlayer
+      config:
+        enabled: false
+        mode: shadow
+        baseUrl: http://127.0.0.1:8765
+        captureAssistant: false
+        projectAllowlist: []
