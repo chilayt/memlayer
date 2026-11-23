@@ -1,6 +1,6 @@
 # dsh-memlayer
 
-Memlayer 的 DSH 适配器，版本 0.2.0-beta.1，随源码分发。桥接验收使用 Memlayer 0.2.4。
+Memlayer 的 DSH 适配器，版本 0.2.0-beta.2，随源码分发。桥接验收使用 Memlayer 0.2.4。
 
 ## 本机试用
 
@@ -12,7 +12,11 @@ Memlayer 的 DSH 适配器，版本 0.2.0-beta.1，随源码分发。桥接验�
     npm run check
     npm pack --ignore-scripts
 
-建议在独立 DSH 配置中加载生成的包。配置补丁默认禁用。启用时将 enabled 设为 true，并在 projectAllowlist 填入项目根绝对路径（默认取 Git 根）或完整的 p_ 存储键。
+从 Release 下载插件包后，在独立配置安装。宿主验证版本为 DSH 0.2.2-rc.5。
+
+    dsh plugin --profile <独立配置名> add <插件包路径>
+
+建议为试用配置单独设置 DSH_HOME。配置补丁默认禁用。启用时将 enabled 设为 true，并在 projectAllowlist 填入项目根绝对路径（默认取 Git 根）或完整的 p_ 存储键。
 
 | 配置 | 默认值 | 行为 |
 |---|---|---|
