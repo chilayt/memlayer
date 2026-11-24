@@ -42,7 +42,7 @@ python tests/forget-test.py
 python memlayer/bridge.py --root ./data/store --retraction-mirror ./data/mirror --port 8770
 ```
 
-客户端可按 [HTTP API](docs/API.md) 接入。DSH 用户可从 [适配器说明](plugin/README.md) 开始。
+客户端可按 [HTTP API](docs/API.md) 接入。支持本地 MCP 的 Agent 可使用 [MCP stdio 适配器](docs/MCP.md) 查询已确认记忆、提交待审候选。DSH 用户可从 [适配器说明](plugin/README.md) 开始。
 
 ### 本机中文语义召回
 
