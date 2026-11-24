@@ -31,7 +31,7 @@ try {
     try {
       const response = await fetch(baseUrl + "/health");
       if (response.ok) {
-        assert.equal((await response.json()).version, "0.3.0");
+        assert.equal((await response.json()).version, "0.3.1");
         healthy = true;
         break;
       }
@@ -72,7 +72,7 @@ try {
   assert.ok(recall[0].text.includes(original.text) && recall[0].text.includes(exception.text));
   await requestJson(baseUrl, "/v1/facts/retract", { body: { fact_id: final, reason: "fictional test complete" } });
   assert.equal((await worker.recall(projectRoot, "夜巡标题")).length, 0);
-  console.log(JSON.stringify({ ok: true, bridgeVersion: "0.3.0", shadowEvents: 1,
+  console.log(JSON.stringify({ ok: true, bridgeVersion: "0.3.1", shadowEvents: 1,
     approvedException: true, retraction: true }, null, 2));
 } finally {
   if (worker) await worker.close();

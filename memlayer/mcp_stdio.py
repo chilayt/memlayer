@@ -12,10 +12,11 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from bridge import terms
-from memlayer import PROJECT_RE
+from memlayer import PROJECT_RE, fact_review_hash
 
 MAX_BRIDGE_RESPONSE = 4 * 1024 * 1024
 CANDIDATE_ID = re.compile(r"c_[a-f0-9]{16}")
+FACT_ID = re.compile(r"f_[a-f0-9]{16}")
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 INVALID_TEXT_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -79,7 +80,7 @@ class MemlayerBridge:
         except HTTPError as error:
             error.close()
             if error.code == 409:
-                raise BridgeError("The candidate changed before confirmation. Review it again.") from None
+                raise BridgeError("The candidate or current memory could not be confirmed. Review both again.") from None
             raise BridgeError(f"The local Memlayer bridge returned HTTP {error.code}.") from None
         except (URLError, OSError):
             raise BridgeError("The local Memlayer bridge is unavailable. Start it and retry.") from None
@@ -95,6 +96,15 @@ class MemlayerBridge:
 
     def _in_scope(self, row: Any) -> bool:
         return isinstance(row, dict) and row.get("project") == self.project and row.get("subject") == self.subject
+
+    def _current_memory(self, row: Any) -> bool:
+        return (
+            self._in_scope(row)
+            and row.get("status") == "current"
+            and row.get("confirmed") is True
+            and row.get("perspective") in {"self", "relayed"}
+            and isinstance(row.get("text"), str)
+        )
 
     def recall(self, query: str, limit: int = 5) -> dict[str, Any]:
         query = required_text(query, "query", 500, multiline=True)
@@ -114,13 +124,7 @@ class MemlayerBridge:
         })
         facts = []
         for row in result.get("facts", []):
-            if (
-                self._in_scope(row)
-                and row.get("status") == "current"
-                and row.get("confirmed") is True
-                and row.get("perspective") in {"self", "relayed"}
-                and isinstance(row.get("text"), str)
-            ):
+            if self._current_memory(row):
                 facts.append({
                     "id": row["id"],
                     "text": row["text"][:2400],
@@ -128,6 +132,32 @@ class MemlayerBridge:
                     "source_ids": row.get("source_ids", []),
                 })
         return {"project": self.project, "subject": self.subject, "facts": facts[:limit]}
+
+    def current_fact(self, fact_id: str) -> dict[str, Any]:
+        offset = 0
+        while True:
+            result = self._request("/v1/facts", params={
+                "project": self.project,
+                "subject": self.subject,
+                "mode": "current",
+                "confirmed_only": "true",
+                "include_inferred": "false",
+                "filter": fact_id,
+                "review_hash": "true",
+                "limit": 20,
+                "offset": offset,
+            })
+            rows, total = result.get("facts"), result.get("total")
+            if not isinstance(rows, list) or type(total) is not int or total < 0:
+                raise BridgeError("The bridge did not return a valid current-memory page.")
+            for row in rows:
+                if self._current_memory(row) and row.get("id") == fact_id:
+                    if row.get("review_hash") != fact_review_hash(row):
+                        raise BridgeError("Start the updated Memlayer bridge to review a replacement or exception.")
+                    return row
+            offset += len(rows)
+            if not rows or offset >= total:
+                raise BridgeError("No current confirmed memory with that ID in the configured project and subject.")
 
     def propose(self, text: str, source_ref: str | None = None) -> dict[str, Any]:
         text = required_text(text, "text", 2000, multiline=True)
@@ -161,13 +191,21 @@ class MemlayerBridge:
             if self._in_scope(row) and row.get("status") == "pending"
         ]
 
-    def _approve_reviewed(self, candidate: dict[str, Any]) -> dict[str, Any]:
-        return self._request("/v1/candidates/approve", body={
+    def _approve_reviewed(
+        self, candidate: dict[str, Any], target: dict[str, Any] | None = None, *, exception: bool = False
+    ) -> dict[str, Any]:
+        path = "/v1/candidates/approve"
+        body = {
             "project": self.project,
             "subject": self.subject,
             "candidate_id": candidate["id"],
             "expected_hash": candidate["content_hash"],
-        })["result"]
+        }
+        if target is not None:
+            path += "-exception" if exception else "-replacement"
+            body["supersedes_fact_id"] = target["id"]
+            body["expected_target_hash"] = target["review_hash"]
+        return self._request(path, body=body)["result"]
 
 
 def serve(bridge: MemlayerBridge) -> None:
@@ -192,7 +230,13 @@ def serve(bridge: MemlayerBridge) -> None:
         readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
     ))
     def propose_memory(text: str, source_ref: str | None = None) -> dict[str, Any]:
-        """Suggest a lasting preference stated by the user. Supply a real message reference if known. A new candidate stays pending until the user confirms separately."""
+        """Suggest an explicitly lasting user preference. Keep one-time requests in the current task.
+
+        For a correction, recall the current preference first. Put only the new rule and its
+        scope in the candidate text. Leave the superseded wording in the review summary.
+        For a conditional exception, include the condition and the exception in the candidate.
+        Show the old memory ID and pending candidate ID separately. Supply a real message reference if known.
+        """
         try:
             return bridge.propose(text, source_ref)
         except (ValueError, BridgeError) as error:
@@ -205,16 +249,31 @@ def candidate_preview(candidate: dict[str, Any]) -> dict[str, Any]:
     return {key: candidate[key] for key in ("id", "project", "subject", "text", "source_event_id")}
 
 
-def confirm_candidate(bridge: MemlayerBridge, candidate_id: str) -> bool:
+def confirm_candidate(
+    bridge: MemlayerBridge, candidate_id: str, *, target_id: str | None = None, exception: bool = False
+) -> bool:
     if not CANDIDATE_ID.fullmatch(candidate_id):
         raise ValueError("Invalid candidate ID.")
+    if target_id is not None and not FACT_ID.fullmatch(target_id):
+        raise ValueError("Invalid current memory ID.")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise BridgeError("Approval requires an interactive terminal so the operator can review the candidate.")
     candidate = next((row for row in bridge.pending() if row["id"] == candidate_id), None)
     if candidate is None:
         raise BridgeError("No pending candidate with that ID in the configured project and subject.")
-    print(json.dumps(candidate_preview(candidate), ensure_ascii=False, indent=2))
+    preview = candidate_preview(candidate)
     confirmation = f"APPROVE {candidate_id}"
+    current = None
+    if target_id is not None:
+        current = bridge.current_fact(target_id)
+        operation = "EXCEPTION" if exception else "REPLACE"
+        preview = {
+            "operation": operation,
+            "current": {key: current[key] for key in ("id", "project", "subject", "text", "source_ids")},
+            "candidate": preview,
+        }
+        confirmation = f"{operation} {candidate_id} {target_id}"
+    print(json.dumps(preview, ensure_ascii=False, indent=2))
     try:
         response = input(f"Type {confirmation} to confirm: ").strip()
     except EOFError:
@@ -222,7 +281,7 @@ def confirm_candidate(bridge: MemlayerBridge, candidate_id: str) -> bool:
     if response != confirmation:
         print("Candidate remains pending.")
         return False
-    reviewed = bridge._approve_reviewed(candidate)
+    reviewed = bridge._approve_reviewed(candidate, current, exception=exception)
     print(json.dumps({"status": "approved", "fact_id": reviewed["fact_id"]}, ensure_ascii=False))
     return True
 
@@ -237,6 +296,9 @@ def main() -> int:
     commands.add_parser("pending", help="list candidates for operator review")
     approve = commands.add_parser("approve", help="confirm one candidate in an interactive terminal")
     approve.add_argument("candidate_id")
+    targets = approve.add_mutually_exclusive_group()
+    targets.add_argument("--replace", metavar="FACT_ID", help="replace the selected current memory")
+    targets.add_argument("--exception", metavar="FACT_ID", help="add an exception to the selected reviewed memory")
     args = parser.parse_args()
     try:
         bridge = MemlayerBridge(args.bridge, args.project, args.subject)
@@ -244,8 +306,11 @@ def main() -> int:
             serve(bridge)
         elif args.command == "pending":
             print(json.dumps([candidate_preview(row) for row in bridge.pending()], ensure_ascii=False, indent=2))
-        elif not confirm_candidate(bridge, args.candidate_id):
-            return 1
+        else:
+            target_id = args.replace if args.replace is not None else args.exception
+            if not confirm_candidate(bridge, args.candidate_id, target_id=target_id,
+                                     exception=args.exception is not None):
+                return 1
     except (ValueError, BridgeError) as error:
         print(f"memlayer MCP: {error}", file=sys.stderr)
         return 2

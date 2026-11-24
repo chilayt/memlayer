@@ -1,6 +1,6 @@
 # 用 MCP 接入 Memlayer
 
-Memlayer 0.3.0 beta 提供本机 stdio MCP。客户端在与记忆库同一台机器上启动适配器，适配器再连接 Memlayer 本机桥。每个配置绑定一个 `project` 和一个 `subject`。下面用独立的演示项目 `p_demo`，主题默认为 `author-note`。
+Memlayer 0.3.1 beta 提供本机 stdio MCP。客户端在与记忆库同一台机器上启动适配器，适配器再连接 Memlayer 本机桥。每个配置绑定一个 `project` 和一个 `subject`。下面用独立的演示项目 `p_demo`，主题默认为 `author-note`。
 
 ## 安装和启动
 
@@ -99,7 +99,7 @@ claude mcp add --transport stdio --scope local memlayer -- "/absolute/path/to/py
 
 客户端可以给提案传入真实消息编号 `source_ref`。省略时，适配器从文本生成稳定的键，网络重试会返回同一个候选。要在以后重新提交完全相同的文本，请提供新的真实来源编号。
 
-可在 Agent 的项目指令中约定：当用户用「以后都这样」「以这个为准」或明确改口来表达长期偏好时，调用 `propose_memory`，然后把候选编号交给用户审阅。一次性要求只用于当前任务。
+可在 Agent 的项目指令中约定，当用户用「以后都这样」「以这个为准」或明确改口来表达长期偏好时，调用 `propose_memory`，然后把候选编号交给用户审阅。改口时先查现行约定，候选正文只写将来生效的规则和范围，旧约定及其编号单独展示给用户。一次性要求只用于当前任务。
 
 ## 由你确认候选
 
@@ -117,11 +117,24 @@ python memlayer/mcp_stdio.py --bridge http://127.0.0.1:8770 --project p_demo app
 
 终端再次显示候选原文和范围。确认无误后，按提示输入 `APPROVE c_0123456789abcdef`。输入其他内容或退出会保留待审状态。批准成功后，记忆才能被 `recall_memory` 检索。MCP 工具集中只有查询和提案，审批命令在独立终端执行。
 
-这里的 `approve` 用于新增记忆。若你要替换旧记忆，需在支持替换审批的宿主中选定旧记忆，或由操作者使用[候选替换 API](API.md)。
+### 替换旧约定或补充条件例外
+
+用候选编号和 `recall_memory` 返回的旧记忆编号运行其中一条命令。
+
+```bash
+python memlayer/mcp_stdio.py --bridge http://127.0.0.1:8770 --project p_demo approve c_0123456789abcdef --replace f_0123456789abcdef
+python memlayer/mcp_stdio.py --bridge http://127.0.0.1:8770 --project p_demo approve c_0123456789abcdef --exception f_0123456789abcdef
+```
+
+终端会并列显示旧约定、候选、各自的来源和所选操作。替换时输入 `REPLACE c_0123456789abcdef f_0123456789abcdef`。补充例外时输入 `EXCEPTION c_0123456789abcdef f_0123456789abcdef`。例外的候选原文应写清什么条件下才适用。
+
+批准替换后，新约定进入现行召回，旧版留档。批准例外后，现行版本同时包含默认约定、适用例外和两侧来源。两种操作都要求旧约定是同一项目和主题中的现行已确认记忆。添加例外还要求旧约定来自已审批候选。请从同一源码版本启动桥和适配器。审批中旧约定被编辑、替换或撤回时，候选保留待审，重新查明现行约定后再决定。
 
 ## 实测结果
 
-我们用 **Codex CLI 0.163.0** 连接隔离库，以虚构数据运行了两个真实 Agent 会话。
+在 0.3.1 的隔离库中，用 **CodeBuddy HY4 Flash** 跑了两轮合成对话。第一轮同时收到长期纠正和一次性要求，只生成一条长期候选，确认前旧约定继续生效。测试程序模拟操作者确认替换后，全新会话查询同一主题，只返回新约定。
+
+0.3.0 的 **Codex CLI 0.163.0** 验收使用隔离库和虚构数据，跑了两个真实 Agent 会话。
 
 | 步骤 | 观察到的结果 |
 |---|---|
@@ -133,6 +146,6 @@ python memlayer/mcp_stdio.py --bridge http://127.0.0.1:8770 --project p_demo app
 
 另用 Windows 上的 **OpenCode 2.2.7** 验证了文档中的项目配置。等待客户端启动后，`opencode mcp list` 显示 `memlayer connected`。上表的候选审批和召回流程使用 Codex CLI 执行。
 
-安装可选依赖后，可运行 `python tests/mcp-stdio-check.py` 复现 stdio 握手、项目和主题隔离、无效输入、重复提交、交互审批和撤回流程。上面的其他客户端配置参照各宿主的本机 stdio 接入格式。
+安装可选依赖后，可运行 `python tests/mcp-stdio-check.py` 复现 stdio 握手、项目和主题隔离、无效输入、重复提交、交互新增、替换、条件例外，以及审批过程中修改或撤回旧约定。上面的其他客户端配置参照各宿主的本机 stdio 接入格式。
 
 桥运行在回环地址。能直接访问该桥的本机进程处在同一信任边界。向 Agent 提供记忆前，请选定合适的项目与主题。详见 [HTTP API](API.md) 和[边界说明](SAFETY-BOUNDARIES.md)。

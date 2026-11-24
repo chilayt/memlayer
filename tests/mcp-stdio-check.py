@@ -15,7 +15,19 @@ from mcp.client.stdio import StdioServerParameters
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "memlayer"))
 from bridge import BridgeService
-from mcp_stdio import MemlayerBridge, confirm_candidate, loopback_origin
+from mcp_stdio import MemlayerBridge, confirm_candidate, loopback_origin, main
+
+
+def terminal_review(args, answer):
+    stdin, stdout, stderr = io.StringIO(), io.StringIO(), io.StringIO()
+    with (
+        patch.object(stdin, "isatty", return_value=True),
+        patch.object(stdout, "isatty", return_value=True),
+        patch.multiple(sys, argv=args, stdin=stdin, stdout=stdout, stderr=stderr),
+        patch("builtins.input", side_effect=answer) as prompt,
+    ):
+        status = main()
+    return status, stdout.getvalue(), stderr.getvalue(), prompt.call_args
 
 
 async def run_checks() -> None:
@@ -43,10 +55,12 @@ async def verify(service: BridgeService) -> None:
             })["fact_id"]
 
     known = seed("allowed", "p_mcp_test", "author-note")
-    seed("other-project", "p_else", "author-note")
-    seed("other-subject", "p_mcp_test", "private-note")
-    seed("unconfirmed", "p_mcp_test", "author-note", confirmed=False)
-    seed("inferred", "p_mcp_test", "author-note", perspective="inferred")
+    blocked_targets = [
+        seed("other-project", "p_else", "author-note"),
+        seed("other-subject", "p_mcp_test", "private-note"),
+        seed("unconfirmed", "p_mcp_test", "author-note", confirmed=False),
+        seed("inferred", "p_mcp_test", "author-note", perspective="inferred"),
+    ]
     for bad_address in (
         "http://outside.invalid:8770",
         "http://name@127.0.0.1:8770",
@@ -111,10 +125,106 @@ async def verify(service: BridgeService) -> None:
 
         visible = (await call("recall_memory", {"query": "FixtureGateM51"}))["facts"]
         assert len(visible) == 1 and visible[0]["text"] == statement
+        current_id = visible[0]["id"]
+
+        # The listing filter also matches references in other facts. Exercise a target
+        # beyond the first page so terminal review can locate an older rule by ID.
         with service.lock:
-            service.store.retract(visible[0]["id"], "synthetic test finished")
+            for index in range(21):
+                service.store.append({
+                    "event_id": f"review-filter-noise-{index}",
+                    "project": bridge.project,
+                    "subject": bridge.subject,
+                    "text": f"Reference noise {index} for {current_id}",
+                    "at": "2099-12-31T00:00:00+00:00",
+                })
+        assert bridge.current_fact(current_id)["text"] == statement
+
+        async def propose(text, source):
+            proposal = await call("propose_memory", {"text": text, "source_ref": source})
+            assert proposal["status"] == "pending"
+            return proposal["candidate_id"]
+
+        correction = "FixtureRevisedZ16: use the silver marker for the archive."
+        replacement = await propose(correction, "fixture-correction")
+        assert (await call("recall_memory", {"query": "FixtureRevisedZ16"}))["facts"] == []
+        for wrong_id in blocked_targets:
+            status, preview, error, prompt = terminal_review(
+                [*args, "approve", replacement, "--replace", wrong_id], AssertionError("Unexpected prompt")
+            )
+            assert status == 2 and "configured project and subject" in error and not preview and prompt is None
+        command = [*args, "approve", replacement, "--replace", current_id]
+        approval = f"REPLACE {replacement} {current_id}"
+        piped = subprocess.run(
+            [sys.executable, "-B", *command], input=approval + "\n", text=True, capture_output=True, timeout=10,
+        )
+        assert piped.returncode == 2 and "interactive terminal" in piped.stderr
+        status, preview, error, prompt = terminal_review(command, [f"APPROVE {replacement}"])
+        assert status == 1 and not error and approval in prompt.args[0]
+        assert correction in preview and statement in preview
+        assert (await call("recall_memory", {"query": "FixtureGateM51"}))["facts"][0]["id"] == current_id
+        status, _, error, _ = terminal_review(command, [approval])
+        assert status == 0 and not error, error
         assert (await call("recall_memory", {"query": "FixtureGateM51"}))["facts"] == []
-    print("PASS stdio discovery, fixed scope, input validation, idempotent proposal, interactive approval, and retraction")
+        revised = (await call("recall_memory", {"query": "FixtureRevisedZ16"}))["facts"][0]
+        assert revised["text"] == correction and revised["source_ids"] == ["fixture-correction"]
+        with service.lock:
+            assert service.store.get_fact(current_id)["status"] == "superseded"
+
+        limited = "FixtureExceptionT24: for the annual night audit only, use the violet marker."
+        exception_id = await propose(limited, "fixture-exception")
+        assert (await call("recall_memory", {"query": "FixtureExceptionT24"}))["facts"] == []
+        status, preview, error, prompt = terminal_review(
+            [*args, "approve", exception_id, "--exception", revised["id"]],
+            [f"EXCEPTION {exception_id} {revised['id']}"],
+        )
+        assert status == 0 and not error, error
+        assert limited in preview and correction in preview and prompt.args[0].startswith("Type EXCEPTION ")
+        active = (await call("recall_memory", {"query": "FixtureExceptionT24"}))["facts"][0]
+        assert correction in active["text"] and limited in active["text"]
+        assert set(active["source_ids"]) == {"fixture-correction", "fixture-exception"}
+        assert (await call("recall_memory", {"query": "FixtureRevisedZ16"}))["facts"][0]["id"] == active["id"]
+
+        edited = await propose("FixtureEditedN38: use a second conditional marker.", "fixture-edit")
+        with service.lock:
+            active_path = service.store._path(service.store.get_fact(active["id"]))
+            original_markdown = active_path.read_text(encoding="utf-8")
+
+        for rebuild in (False, True):
+            def edit_while_reviewing(_prompt):
+                with service.lock:
+                    active_path.write_text(original_markdown + "\nSynthetic edited wording.\n", encoding="utf-8")
+                    if rebuild:
+                        service.store.rebuild()
+                return f"EXCEPTION {edited} {active['id']}"
+
+            status, preview, error, _ = terminal_review(
+                [*args, "approve", edited, "--exception", active["id"]], edit_while_reviewing,
+            )
+            assert status == 2 and "Review both again" in error
+            assert "Synthetic edited wording" not in preview
+            assert any(row["id"] == edited for row in bridge.pending())
+            assert (await call("recall_memory", {"query": "FixtureEditedN38"}))["facts"] == []
+            with service.lock:
+                active_path.write_text(original_markdown, encoding="utf-8")
+                if rebuild:
+                    service.store.rebuild()
+
+        stale = await propose("FixtureStaleX44: disagree with the current rule.", "fixture-stale")
+
+        def withdraw_while_reviewing(_prompt):
+            with service.lock:
+                service.store.retract(active["id"], "synthetic concurrent withdrawal")
+            return f"REPLACE {stale} {active['id']}"
+
+        status, _, error, _ = terminal_review(
+            [*args, "approve", stale, "--replace", active["id"]], withdraw_while_reviewing,
+        )
+        assert status == 2 and "Review both again" in error
+        assert any(row["id"] == stale for row in bridge.pending())
+        assert (await call("recall_memory", {"query": "FixtureStaleX44"}))["facts"] == []
+        assert (await call("recall_memory", {"query": "FixtureExceptionT24"}))["facts"] == []
+    print("PASS stdio discovery, scope, idempotency, interactive add/replace/exception, and stale review after edit or withdrawal")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 beta
+
+- Let MCP operators approve a replacement or a limited exception from the terminal. Review shows both texts and requires a confirmation that names the action and both records.
+- Check the reviewed rule's text and sources before writing, so an edit or withdrawal leaves the proposal pending.
+- Guide MCP clients to propose the new wording and keep temporary instructions in the current task.
+
 ## 0.3.0 beta
 
 - Add a local stdio MCP adapter for searching current, approved memories and submitting pending proposals.

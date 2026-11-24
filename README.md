@@ -3,7 +3,7 @@
 > 可审计的 agent 记忆层：Markdown 事实台账 + 人工审批 + 可撤回 + 项目隔离。
 > 研究性项目（beta），面向单用户本机使用。
 
-**版本 0.3.0 beta。** 面向单用户本机使用。词法检索可直接运行，另有可选的本机中文语义和重排。版本变化见 [CHANGELOG.md](CHANGELOG.md)。研究笔记和合成评测方法见 [memlayer-notes](https://github.com/chilayt/memlayer-notes)。
+**版本 0.3.1 beta。** 面向单用户本机使用。词法检索可直接运行，另有可选的本机中文语义和重排。版本变化见 [CHANGELOG.md](CHANGELOG.md)。研究笔记和合成评测方法见 [memlayer-notes](https://github.com/chilayt/memlayer-notes)。
 
 ## 是什么
 
