@@ -1,6 +1,6 @@
 # dsh-memlayer
 
-Memlayer 的 DSH 适配器，版本 0.2.0-beta.2，随源码分发。桥接验收使用 Memlayer 0.2.4。
+Memlayer 的 DSH 适配器，版本 0.2.0-beta.2，随源码分发。桥接验收覆盖 Memlayer 0.3.0。
 
 ## 本机试用
 

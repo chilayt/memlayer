@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 beta
+
+- Add a local stdio MCP adapter for searching current, approved memories and submitting pending proposals.
+- Pin each adapter to an operator-selected project and subject. Confirmation runs in a separate interactive terminal.
+- Document Codex CLI, OpenCode v2, Claude Code, and generic stdio setup, and report the Codex CLI before-and-after approval test and OpenCode connection check.
+
 ## 0.2.4 beta
 
 - Require local Host headers and the JSON media type for bridge writes. Configure external embedding credentials explicitly.

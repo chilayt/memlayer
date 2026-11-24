@@ -3,7 +3,7 @@
 > 可审计的 agent 记忆层：Markdown 事实台账 + 人工审批 + 可撤回 + 项目隔离。
 > 研究性项目（beta），面向单用户本机使用。
 
-**版本 0.2.4 beta。** 面向单用户本机使用。词法检索可直接运行，另有可选的本机中文语义和重排。版本变化见 [CHANGELOG.md](CHANGELOG.md)。研究笔记和合成评测方法见 [memlayer-notes](https://github.com/chilayt/memlayer-notes)。
+**版本 0.3.0 beta。** 面向单用户本机使用。词法检索可直接运行，另有可选的本机中文语义和重排。版本变化见 [CHANGELOG.md](CHANGELOG.md)。研究笔记和合成评测方法见 [memlayer-notes](https://github.com/chilayt/memlayer-notes)。
 
 ## 是什么
 
@@ -42,7 +42,7 @@ python tests/forget-test.py
 python memlayer/bridge.py --root ./data/store --retraction-mirror ./data/mirror --port 8770
 ```
 
-客户端可按 [HTTP API](docs/API.md) 接入。支持本地 MCP 的 Agent 可使用 [MCP stdio 适配器](docs/MCP.md) 查询已确认记忆、提交待审候选。DSH 用户可从 [适配器说明](plugin/README.md) 开始。
+客户端可按 [HTTP API](docs/API.md) 接入。支持本地 MCP 的 Agent 可使用 [MCP 接入、审批和实测说明](docs/MCP.md)，其中包括 Codex CLI、OpenCode v2 和 Claude Code 的配置示例。DSH 用户可从 [适配器说明](plugin/README.md) 开始。
 
 ### 本机中文语义召回
 

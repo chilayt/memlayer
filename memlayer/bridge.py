@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 from memlayer import ReviewConflict, Store, now_iso, validate_event
 
 
-VERSION = "0.2.4"
+VERSION = "0.3.0"
 MAX_BODY = 1024 * 1024
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
