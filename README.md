@@ -1,65 +1,71 @@
-# memlayer
+# Memlayer
 
-> 可审计的 agent 记忆层：Markdown 事实台账 + 人工审批 + 可撤回 + 项目隔离。
-> 研究性项目（beta），面向单用户本机使用。
+**Carry approved project decisions into your next agent session.** Memlayer gives Codex and other local MCP clients project-scoped memory with a human review step. You can inspect the source of a recalled rule, replace it when you change your mind, or add an exception for a specific situation.
 
-**版本 0.3.1 beta。** 面向单用户本机使用。词法检索可直接运行，另有可选的本机中文语义和重排。版本变化见 [CHANGELOG.md](CHANGELOG.md)。研究笔记和合成评测方法见 [memlayer-notes](https://github.com/chilayt/memlayer-notes)。
+[Download v0.3.1 beta](https://github.com/chilayt/memlayer/releases/tag/v0.3.1) · [Connect Codex](#connect-codex) · [Evaluation and methodology](docs/EVALUATION.md) · [简体中文](README.zh-CN.md)
 
-## 是什么
+## Try a correction across two sessions
 
-memlayer 给 LLM agent 提供跨会话长期记忆，核心特点：
+Say **“From now on, put the test command first in release handoffs.”** Your agent can submit that wording as a candidate. Review the text and project in your terminal, then approve it. In a fresh session, ask how to start a handoff. The memory tool can return the approved rule with its original source reference.
 
-- **Markdown 真相源**：事实存为可读、可 diff、可重建的 `.md` 台账；SQLite 仅作可丢弃索引。
-- **人工审批门**：批准后候选才可召回。可确认新增、替换现行偏好，或只在指定条件增加例外。
-- **可撤回**：墓碑 + 撤回账本 + 同源级联 + store 外镜像 + 启动重放，防备份回灌复活。
-- **项目隔离**：调用方使用独立项目命名空间。DSH 插件从项目根目录派生存储键。
-- **双时间效度**：valid_from / valid_to + recorded_at。
-- **检索**：词项 + 语义混合（RRF 融合），语义层可开关、shadow 对比。
+If you later say **“For hotfixes, lead with the rollback command,”** review it as a scoped exception. The regular rule stays in effect for other releases. If a rule changes while you are reviewing it, the candidate stays pending so you can review the current version.
 
-## 架构
+| Capability | How it works |
+| --- | --- |
+| **Human review** | MCP provides recall and proposals. You approve an addition, replacement, or exception in a separate terminal. |
+| **Project scope and sources** | Each adapter instance binds to a project and subject. Recall includes source references. |
+| **Local storage** | Markdown is the fact ledger and SQLite is its rebuildable index. Lexical search runs locally by default. A local Chinese embedding model and reranker are optional. |
+| **Retraction** | The retraction ledger and its separate mirror keep withdrawn facts out of future recall after replay. [Storage and trust boundaries](docs/SAFETY-BOUNDARIES.md) |
 
-| 组件 | 文件 | 说明 |
-|---|---|---|
-| 存储引擎 | `memlayer/memlayer.py` | 台账/索引/写队列/幂等/撤回/重放 |
-| HTTP 桥 | `memlayer/bridge.py` | loopback-only，单写者，召回/撤回/候选 API |
-| 语义层 | `memlayer/semantic.py` | 嵌入客户端 + 缓存 + RRF（可选，默认关） |
-| DSH 插件 | `plugin/` | TypeScript，shadow 捕获 + active 召回注入 |
-| 测试 | `tests/` | 存储、审批、撤回和重启回归 |
-| 评测 | `eval/` | 合成中文检索题集与本机评测 |
+## Verify it before connecting your agent
 
-详见 [docs/DESIGN.md](docs/DESIGN.md)。
-
-## 快速开始
-
-需要 Python 3.11 或以上。DSH 适配器另需 Node.js 22 或以上。
+With Python 3.11+ and a copy of the [v0.3.1 source release](https://github.com/chilayt/memlayer/releases/tag/v0.3.1), run the protocol smoke test from the source root. It uses an isolated fixture store and requires no model API key.
 
 ```bash
-# 存储引擎自测（纯标准库）
-python tests/test_phase1.py
-python tests/forget-test.py
-
-# 起桥（loopback）
-python memlayer/bridge.py --root ./data/store --retraction-mirror ./data/mirror --port 8770
+python -m pip install -r requirements-mcp.txt
+python tests/mcp-stdio-check.py
 ```
 
-客户端可按 [HTTP API](docs/API.md) 接入。支持本地 MCP 的 Agent 可使用 [MCP 接入、审批和实测说明](docs/MCP.md)，其中包括 Codex CLI、OpenCode v2 和 Claude Code 的配置示例。DSH 用户可从 [适配器说明](plugin/README.md) 开始。
+## Connect Codex
 
-### 本机中文语义召回
+From the same v0.3.1 source directory, start the local bridge and keep it running.
 
-准备 BGE-small-zh-v1.5 的 ONNX 模型和 tokenizer，在同一个目录放入 `model_quantized.onnx` 和 `tokenizer.json`。安装 CPU 版 `onnxruntime` 与 `tokenizers` 到运行桥的 Python，也可以用 `pip install --target <模型目录>/packages onnxruntime tokenizers` 安装到独立目录。[原始模型](https://huggingface.co/BAAI/bge-small-zh-v1.5) · [量化 ONNX](https://huggingface.co/Xenova/bge-small-zh-v1.5/tree/75c43b069aac4d136ba6bc1122f995fedcfd2781)
+```bash
+python memlayer/bridge.py --root ./data/mcp-demo --port 8770
+```
 
-起桥时加 `--local-embedding <模型目录>` 即可。运行 `python eval/eval-local-semantic.py <模型目录>` 验证。这个选项通过 CPU 在本机计算向量，默认部署仍可使用纯词法。
+Install the MCP dependency as shown above, then add this entry to your Codex `config.toml`. Replace both paths with absolute paths. Use the Python interpreter where you installed the dependency.
 
-可选启用本机重排。将 BGE-reranker-v2-m3 的 INT8 ONNX 文件取名为 `reranker/model_quantized.onnx`，并将对应 tokenizer 放到 `reranker/tokenizer.json`。两个路径相对于本机向量模型目录。重启本机桥后，`/health` 的 `semantic.reranker` 会显示 `ready`。[原始模型](https://huggingface.co/BAAI/bge-reranker-v2-m3) · [INT8 ONNX](https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/tree/6f5ff65298512715a1e669753bc754d2bc8f367b)
+```toml
+[mcp_servers.memlayer]
+command = "/absolute/path/to/python"
+args = [
+  "/absolute/path/to/memlayer/mcp_stdio.py",
+  "--bridge", "http://127.0.0.1:8770",
+  "--project", "p_demo",
+  "serve",
+]
+```
 
-运行 `python eval/eval-local-semantic.py <模型目录> --holdout --require-reranker` 可验证原回归样例和补充的改写与无关问题。
+Run `codex mcp list` to confirm the entry. Ask the agent to call `propose_memory` for the handoff example. In your own terminal, run `pending`, then `approve` with the candidate ID it returned.
 
-## 重要边界（务必读）
+```bash
+python memlayer/mcp_stdio.py --bridge http://127.0.0.1:8770 --project p_demo pending
+python memlayer/mcp_stdio.py --bridge http://127.0.0.1:8770 --project p_demo approve c_0123456789abcdef
+```
 
-**撤回 ≠ 彻底遗忘。** 撤回停止召回，但不删除原文/日志/备份/已发上下文/外部副本。详见 [docs/SAFETY-BOUNDARIES.md](docs/SAFETY-BOUNDARIES.md)。
+Use your actual candidate ID, review the displayed text and scope, and enter the confirmation shown in the terminal. Open a new session and ask your agent to call `recall_memory` about the handoff rule.
 
-显式设置 MEMLAYER_SEMANTIC=1 和 MEMLAYER_EMB_KEY 后可启用外部嵌入。查询和候选事实文本会发给该服务，含 shadow 模式。本机桥只接受本机原生客户端，启动它的账户和机器上的可信进程共享这一服务边界。
+[Official OpenAI MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) · [OpenCode, Claude Code, generic stdio and advanced approval examples](docs/MCP.md) · [DSH adapter](plugin/README.md)
 
-## 许可
+## What has been tested
 
-Apache-2.0（代码）。见 [LICENSE](LICENSE)。
+| Test | Observed result |
+| --- | --- |
+| **v0.3.1 release regressions** | 134 engine checks, 16 DSH adapter tests, and the stdio MCP smoke test passed. The smoke test covers scope isolation, repeat submissions, reviewed additions, replacements and exceptions, and stale review targets. |
+| **Real-agent workflow** | Codex CLI skipped pending text during recall, then returned the approved text and source ID in a fresh session. On v0.3.1, CodeBuddy HY4 Flash proposed a lasting correction while a one-off request stayed in the session. Both used isolated synthetic data and simulated terminal approval. |
+| **Development snapshot, 108 cross-session stages** | With the same DeepSeek V4.1 Flash model over nine paired workflows, Memlayer passed 7/9 initial blind reviews and Memorix 1.10.4 passed 5/9. After recovery and rework, both finished at 9/9. The development snapshot includes later retrieval changes. |
+
+The [evaluation report](docs/EVALUATION.md) gives the exact scope, paired timings, recovery policy, and additional retrieval and desktop tests. Memlayer is a single-user local beta. Personal adaptation still needs sustained use.
+
+[Design](docs/DESIGN.md) · [HTTP API](docs/API.md) · [Changelog](CHANGELOG.md) · [Research notes](https://github.com/chilayt/memlayer-notes) · [Apache-2.0 license](LICENSE)
